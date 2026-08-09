@@ -126,7 +126,7 @@ export function History() {
               <TableRow>
                 <TableCell colSpan={6} className="text-center h-24 text-muted-foreground">Loading...</TableCell>
               </TableRow>
-            ) : analyses?.length === 0 ? (
+            ) : !Array.isArray(analyses) || analyses.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center h-48 text-muted-foreground">
                   <div className="flex flex-col items-center justify-center">
@@ -136,7 +136,7 @@ export function History() {
                 </TableCell>
               </TableRow>
             ) : (
-              analyses?.map((analysis) => (
+              analyses.map((analysis) => (
                 <TableRow key={analysis.id} className="group cursor-pointer hover:bg-muted/50" data-testid={`history-row-${analysis.id}`}>
                   <TableCell className="font-medium">
                     <Link href={`/analyses/${analysis.id}`} className="flex items-center gap-2 hover:text-primary transition-colors">

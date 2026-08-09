@@ -124,6 +124,10 @@ export function Dashboard() {
   const [period, setPeriod] = useState<Period>("30");
   const { data: trends, loading: trendsLoading } = useTrends(period);
 
+  const safeTrends = Array.isArray(trends) ? trends : [];
+  const safeAnalyses = Array.isArray(analyses) ? analyses : [];
+  const safeInputTypes = Array.isArray(stats?.byInputType) ? stats.byInputType : [];
+
   return (
     <div className="space-y-8 animate-in fade-in duration-500">
       <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
@@ -213,7 +217,7 @@ export function Dashboard() {
             </div>
           </CardHeader>
           <CardContent className="pt-0">
-            <TrendsChart data={trends} loading={trendsLoading} />
+            <TrendsChart data={safeTrends} loading={trendsLoading} />
           </CardContent>
         </Card>
 
@@ -224,29 +228,29 @@ export function Dashboard() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-0">
-            <SeverityChart data={trends} loading={trendsLoading} />
+            <SeverityChart data={safeTrends} loading={trendsLoading} />
           </CardContent>
         </Card>
       </div>
 
       {/* Input type bar */}
-      {!statsLoading && stats?.byInputType && stats.byInputType.length > 0 && (
+      {!statsLoading && safeInputTypes.length > 0 && (
         <Card className="bg-card/50 backdrop-blur-sm border-border/50">
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium text-muted-foreground">Input Types</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="flex h-3 w-full rounded-full overflow-hidden mb-2">
-              {stats.byInputType.map((it, idx) => {
+              {safeInputTypes.map((it, idx) => {
                 const colors = ["bg-primary", "bg-blue-500", "bg-cyan-500", "bg-sky-500", "bg-indigo-500", "bg-teal-500", "bg-violet-500", "bg-pink-500", "bg-orange-500", "bg-emerald-500"];
-                const percent = (it.count / (stats.total || 1)) * 100;
+                const percent = (it.count / (stats?.total || 1)) * 100;
                 return (
                   <div key={it.inputType} style={{ width: `${percent}%` }} className={colors[idx % colors.length]} title={`${it.inputType}: ${it.count}`} />
                 );
               })}
             </div>
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-              {stats.byInputType.map((it, idx) => {
+              {safeInputTypes.map((it, idx) => {
                 const colors = ["bg-primary", "bg-blue-500", "bg-cyan-500", "bg-sky-500", "bg-indigo-500", "bg-teal-500", "bg-violet-500", "bg-pink-500", "bg-orange-500", "bg-emerald-500"];
                 return (
                   <div key={it.inputType} className="flex items-center gap-1.5">
@@ -278,7 +282,7 @@ export function Dashboard() {
                 </CardContent>
               </Card>
             ))
-          ) : !analyses || analyses.length === 0 ? (
+          ) : safeAnalyses.length === 0 ? (
             <Card className="bg-card/50 backdrop-blur-sm border-dashed border-border/50">
               <CardContent className="flex flex-col items-center justify-center p-12 text-center text-muted-foreground">
                 <Activity className="w-12 h-12 mb-4 opacity-20" />
@@ -286,7 +290,7 @@ export function Dashboard() {
               </CardContent>
             </Card>
           ) : (
-            analyses.slice(0, 6).map(analysis => (
+            safeAnalyses.slice(0, 6).map(analysis => (
               <Link key={analysis.id} href={`/analyses/${analysis.id}`}>
                 <Card className="bg-card/50 hover:bg-card/80 transition-colors cursor-pointer border-border/50 group" data-testid={`analysis-card-${analysis.id}`}>
                   <CardContent className="p-5 flex items-center justify-between gap-4">

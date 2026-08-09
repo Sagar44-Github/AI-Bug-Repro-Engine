@@ -194,7 +194,7 @@ export function ProjectsPage() {
         <div className="grid gap-4 md:grid-cols-2">
           {[0, 1, 2].map(i => <Skeleton key={i} className="h-36 rounded-xl" />)}
         </div>
-      ) : projects && projects.length > 0 ? (
+      ) : Array.isArray(projects) && projects.length > 0 ? (
         <div className="grid gap-4 md:grid-cols-2">
           {projects.map(p => (
             <Card key={p.id} className="bg-card/50 border-border/50 hover:border-primary/20 transition-colors">
