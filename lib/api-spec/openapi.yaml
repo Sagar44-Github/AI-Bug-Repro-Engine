@@ -1,0 +1,968 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: Bug Reproduction Engine API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: analyses
+    description: Bug report analysis pipeline operations
+  - name: github
+    description: GitHub issue ingestion
+  - name: tools
+    description: Standalone AI tools
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /analyses:
+    get:
+      operationId: listAnalyses
+      tags: [analyses]
+      summary: List all bug analyses
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, running, completed, failed]
+        - name: inputType
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of analyses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/BugAnalysis"
+    post:
+      operationId: createAnalysis
+      tags: [analyses]
+      summary: Create a new bug analysis
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAnalysisBody"
+      responses:
+        "201":
+          description: Created analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BugAnalysis"
+
+  /analyses/{id}:
+    get:
+      operationId: getAnalysis
+      tags: [analyses]
+      summary: Get a bug analysis by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Bug analysis with all agent outputs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BugAnalysisFull"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    patch:
+      operationId: updateAnalysis
+      tags: [analyses]
+      summary: Update an analysis (title, codeContext)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateAnalysisBody"
+      responses:
+        "200":
+          description: Updated analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BugAnalysisFull"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+    delete:
+      operationId: deleteAnalysis
+      tags: [analyses]
+      summary: Delete a bug analysis
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /analyses/{id}/run:
+    post:
+      operationId: runAnalysis
+      tags: [analyses]
+      summary: Run the multi-agent pipeline (SSE stream)
+      description: |
+        Starts the multi-agent pipeline for the given bug analysis.
+        Returns an SSE stream of agent events showing real-time progress.
+        Events: { type: "agent_start" | "agent_output" | "agent_done" | "pipeline_done" | "error", agentName: string, content: string }
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                frameworkHint:
+                  type: string
+                  description: "Optional test framework override (e.g. Jest, Pytest, Cypress). If provided, the Test Writer will use this framework."
+      responses:
+        "200":
+          description: SSE stream of agent events
+          content:
+            text/event-stream: {}
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /analyses/{id}/regenerate-test:
+    post:
+      operationId: regenerateTest
+      tags: [analyses]
+      summary: Re-run Test Writer with a different framework
+      description: |
+        Re-runs only the Test Writer agent with a specified framework override.
+        The reproduction steps and entities from the original run are reused.
+        Only works on completed analyses.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegenerateTestBody"
+      responses:
+        "200":
+          description: Regenerated test result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RegeneratedTest"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "409":
+          description: Analysis not in completed state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /analyses/{id}/export:
+    get:
+      operationId: exportAnalysis
+      tags: [analyses]
+      summary: Export analysis as markdown report
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Markdown report
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportAnalysisResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /analyses/{id}/correlations:
+    get:
+      operationId: getCorrelations
+      tags: [analyses]
+      summary: Find similar bugs from past analyses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of correlated analyses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CorrelationMatch"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /analyses/{id}/annotations:
+    get:
+      operationId: listAnnotations
+      tags: [analyses]
+      summary: List collaboration annotations for an analysis
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of annotations
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/CollaborationAnnotation"
+    post:
+      operationId: createAnnotation
+      tags: [analyses]
+      summary: Add a collaboration annotation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAnnotationBody"
+      responses:
+        "201":
+          description: Created annotation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CollaborationAnnotation"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /analyses/stats/summary:
+    get:
+      operationId: getAnalysisStats
+      tags: [analyses]
+      summary: Get summary stats across all analyses
+      responses:
+        "200":
+          description: Analysis statistics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnalysisStats"
+
+  /github/fetch-issue:
+    post:
+      operationId: fetchGithubIssue
+      tags: [github]
+      summary: Fetch a GitHub issue and return its content
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FetchGithubIssueBody"
+      responses:
+        "200":
+          description: GitHub issue content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GithubIssueContent"
+        "400":
+          description: Invalid URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+        "404":
+          description: Issue not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /tools/env-diff:
+    post:
+      operationId: envDiff
+      tags: [tools]
+      summary: Compare two environment configs and identify bug-causing differences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnvDiffBody"
+      responses:
+        "200":
+          description: Environment diff result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EnvDiffResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /tools/nl2test:
+    post:
+      operationId: nl2test
+      tags: [tools]
+      summary: Generate a test case from a natural language description
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Nl2TestBody"
+      responses:
+        "200":
+          description: Generated test code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Nl2TestResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+  /tools/flaky-detector:
+    post:
+      operationId: flakyDetector
+      tags: [tools]
+      summary: Detect flaky tests and explain why they are flaky
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FlakyDetectorBody"
+      responses:
+        "200":
+          description: Flakiness analysis
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FlakyDetectorResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApiError"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    BugAnalysis:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        inputType:
+          type: string
+          enum: [raw_text, github_url, stack_trace, jira_ticket, sentry_event, log_file, curl_request, video_description, screenshot, performance_profile]
+        rawInput:
+          type: string
+        githubUrl:
+          type: ["string", "null"]
+        codeContext:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        confidenceScore:
+          type: ["number", "null"]
+        severity:
+          type: ["string", "null"]
+          enum: ["critical", "high", "medium", "low", null]
+        severityReason:
+          type: ["string", "null"]
+        tags:
+          type: ["string", "null"]
+        autoTags:
+          type: ["string", "null"]
+        resolutionStatus:
+          type: ["string", "null"]
+          enum: ["open", "in_progress", "fixed", "verified_fixed", "wont_fix", null]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - inputType
+        - rawInput
+        - status
+        - createdAt
+        - updatedAt
+
+    BugAnalysisFull:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        inputType:
+          type: string
+          enum: [raw_text, github_url, stack_trace, jira_ticket, sentry_event, log_file, curl_request, video_description, screenshot, performance_profile]
+        rawInput:
+          type: string
+        githubUrl:
+          type: ["string", "null"]
+        codeContext:
+          type: ["string", "null"]
+        status:
+          type: string
+          enum: [pending, running, completed, failed]
+        confidenceScore:
+          type: ["number", "null"]
+        confidenceBreakdown:
+          type: ["string", "null"]
+        severity:
+          type: ["string", "null"]
+          enum: ["critical", "high", "medium", "low", null]
+        severityReason:
+          type: ["string", "null"]
+        auditTrail:
+          type: ["string", "null"]
+        correlations:
+          type: ["string", "null"]
+        tags:
+          type: ["string", "null"]
+        autoTags:
+          type: ["string", "null"]
+        fixSuggestions:
+          type: ["string", "null"]
+        resolutionStatus:
+          type: ["string", "null"]
+          enum: ["open", "in_progress", "fixed", "verified_fixed", "wont_fix", null]
+        resolvedBy:
+          type: ["string", "null"]
+        resolvedAt:
+          type: ["string", "null"]
+          format: date-time
+        fixDescription:
+          type: ["string", "null"]
+        extractedEntities:
+          type: ["string", "null"]
+        hypotheses:
+          type: ["string", "null"]
+        reproductionSteps:
+          type: ["string", "null"]
+        testCode:
+          type: ["string", "null"]
+        testSyntaxStatus:
+          type: ["string", "null"]
+          enum: ["verified", "warning", "unchecked", null]
+        flowDiagram:
+          type: ["string", "null"]
+        clarifyingQuestions:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - inputType
+        - rawInput
+        - status
+        - createdAt
+        - updatedAt
+
+    CreateAnalysisBody:
+      type: object
+      properties:
+        title:
+          type: string
+        inputType:
+          type: string
+          enum: [raw_text, github_url, stack_trace, jira_ticket, sentry_event, log_file, curl_request, video_description, screenshot, performance_profile]
+        rawInput:
+          type: string
+        githubUrl:
+          type: string
+        codeContext:
+          type: string
+        tags:
+          type: string
+      required:
+        - title
+        - inputType
+        - rawInput
+
+    UpdateAnalysisBody:
+      type: object
+      properties:
+        title:
+          type: string
+        codeContext:
+          type: string
+        tags:
+          type: string
+
+    AnalysisStats:
+      type: object
+      properties:
+        total:
+          type: integer
+        completed:
+          type: integer
+        running:
+          type: integer
+        failed:
+          type: integer
+        pending:
+          type: integer
+        avgConfidence:
+          type: ["number", "null"]
+        byInputType:
+          type: array
+          items:
+            $ref: "#/components/schemas/InputTypeCount"
+      required:
+        - total
+        - completed
+        - running
+        - failed
+        - pending
+        - avgConfidence
+        - byInputType
+
+    InputTypeCount:
+      type: object
+      properties:
+        inputType:
+          type: string
+        count:
+          type: integer
+      required:
+        - inputType
+        - count
+
+    ExportAnalysisResponse:
+      type: object
+      properties:
+        markdown:
+          type: string
+        title:
+          type: string
+      required:
+        - markdown
+        - title
+
+    CorrelationMatch:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        similarity:
+          type: integer
+          description: Similarity percentage 0-100
+        commonFactors:
+          type: array
+          items:
+            type: string
+        rootCauseNote:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - similarity
+        - commonFactors
+        - rootCauseNote
+        - createdAt
+
+    CollaborationAnnotation:
+      type: object
+      properties:
+        id:
+          type: integer
+        analysisId:
+          type: integer
+        authorName:
+          type: string
+        type:
+          type: string
+          enum: [note, verified, failed, question]
+        stepRef:
+          type: ["string", "null"]
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - analysisId
+        - authorName
+        - type
+        - content
+        - createdAt
+
+    CreateAnnotationBody:
+      type: object
+      properties:
+        authorName:
+          type: string
+        type:
+          type: string
+          enum: [note, verified, failed, question]
+        stepRef:
+          type: string
+        content:
+          type: string
+      required:
+        - authorName
+        - type
+        - content
+
+    EnvDiffBody:
+      type: object
+      properties:
+        env1:
+          type: string
+          description: First environment config (key=value lines or JSON)
+        env2:
+          type: string
+          description: Second environment config (key=value lines or JSON)
+        bugDescription:
+          type: string
+          description: Description of the bug or intermittent behavior
+        label1:
+          type: string
+          description: Label for first environment (e.g. "Local", "Staging")
+        label2:
+          type: string
+          description: Label for second environment (e.g. "Production", "CI")
+      required:
+        - env1
+        - env2
+        - bugDescription
+
+    EnvDiffResult:
+      type: object
+      properties:
+        differences:
+          type: array
+          items:
+            $ref: "#/components/schemas/EnvDifference"
+        verdict:
+          type: string
+          description: AI verdict on the most likely culprit
+        likelihood:
+          type: string
+          enum: [high, medium, low]
+        summary:
+          type: string
+      required:
+        - differences
+        - verdict
+        - likelihood
+        - summary
+
+    EnvDifference:
+      type: object
+      properties:
+        key:
+          type: string
+        value1:
+          type: ["string", "null"]
+        value2:
+          type: ["string", "null"]
+        impact:
+          type: string
+          enum: [critical, likely, unlikely, irrelevant]
+        reasoning:
+          type: string
+      required:
+        - key
+        - value1
+        - value2
+        - impact
+        - reasoning
+
+    Nl2TestBody:
+      type: object
+      properties:
+        description:
+          type: string
+          description: Natural language description of what to test
+        framework:
+          type: string
+          description: Test framework hint (e.g. Jest, Pytest, Mocha, Cypress)
+        codeContext:
+          type: string
+          description: Optional relevant code context
+      required:
+        - description
+
+    Nl2TestResult:
+      type: object
+      properties:
+        testCode:
+          type: string
+        framework:
+          type: string
+        explanation:
+          type: string
+        coverageNotes:
+          type: string
+      required:
+        - testCode
+        - framework
+        - explanation
+        - coverageNotes
+
+    FlakyDetectorBody:
+      type: object
+      properties:
+        testCode:
+          type: string
+          description: The test suite or individual test code to analyze
+        language:
+          type: string
+          description: Language/framework hint
+        runCount:
+          type: integer
+          description: Optional number of times the test has been run
+      required:
+        - testCode
+
+    FlakyDetectorResult:
+      type: object
+      properties:
+        flakyTests:
+          type: array
+          items:
+            $ref: "#/components/schemas/FlakyTest"
+        overallRisk:
+          type: string
+          enum: [high, medium, low, none]
+        summary:
+          type: string
+      required:
+        - flakyTests
+        - overallRisk
+        - summary
+
+    FlakyTest:
+      type: object
+      properties:
+        testName:
+          type: string
+        riskLevel:
+          type: string
+          enum: [high, medium, low]
+        category:
+          type: string
+          enum: [race_condition, environment_dependency, non_deterministic_data, timing, external_dependency, state_leak, other]
+        explanation:
+          type: string
+        fix:
+          type: string
+      required:
+        - testName
+        - riskLevel
+        - category
+        - explanation
+        - fix
+
+    FetchGithubIssueBody:
+      type: object
+      properties:
+        url:
+          type: string
+      required:
+        - url
+
+    GithubIssueContent:
+      type: object
+      properties:
+        title:
+          type: string
+        body:
+          type: string
+        state:
+          type: string
+        labels:
+          type: array
+          items:
+            type: string
+        comments:
+          type: array
+          items:
+            type: string
+        url:
+          type: string
+        number:
+          type: integer
+        author:
+          type: string
+      required:
+        - title
+        - body
+        - state
+        - labels
+        - comments
+        - url
+        - number
+        - author
+
+    RegenerateTestBody:
+      type: object
+      required:
+        - framework
+      properties:
+        framework:
+          type: string
+          description: "Target test framework (e.g. Jest, Pytest, Cypress, Playwright, Mocha, Vitest)"
+
+    RegeneratedTest:
+      type: object
+      required:
+        - testCode
+        - framework
+        - language
+        - testSyntaxStatus
+      properties:
+        testCode:
+          type: string
+        framework:
+          type: string
+        language:
+          type: string
+        testSyntaxStatus:
+          type: string
+          enum: [verified, warning, unchecked]
+
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
