@@ -1,3 +1,4 @@
+// AI Bug Repro Engine App Root
 import { Component, type ReactNode } from "react";
 import { Switch, Route, Router as WouterRouter } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
