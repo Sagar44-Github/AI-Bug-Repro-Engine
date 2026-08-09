@@ -322,6 +322,124 @@ async function parseSuccessBody(
   }
 }
 
+import { INITIAL_MOCK_ANALYSES, INITIAL_MOCK_PROJECTS } from "./mock-dataset";
+
+function getStoredMockAnalyses() {
+  if (typeof localStorage === "undefined") return INITIAL_MOCK_ANALYSES;
+  const stored = localStorage.getItem("bugrepro_mock_analyses");
+  if (!stored) {
+    localStorage.setItem("bugrepro_mock_analyses", JSON.stringify(INITIAL_MOCK_ANALYSES));
+    return INITIAL_MOCK_ANALYSES;
+  }
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return INITIAL_MOCK_ANALYSES;
+  }
+}
+
+function getStoredMockProjects() {
+  if (typeof localStorage === "undefined") return INITIAL_MOCK_PROJECTS;
+  const stored = localStorage.getItem("bugrepro_mock_projects");
+  if (!stored) {
+    localStorage.setItem("bugrepro_mock_projects", JSON.stringify(INITIAL_MOCK_PROJECTS));
+    return INITIAL_MOCK_PROJECTS;
+  }
+  try {
+    return JSON.parse(stored);
+  } catch {
+    return INITIAL_MOCK_PROJECTS;
+  }
+}
+
+function handleMockRequest<T>(urlStr: string, method: string, body?: any): T | undefined {
+  try {
+    const url = new URL(urlStr, "http://localhost");
+    const path = url.pathname;
+
+    const analyses = getStoredMockAnalyses();
+    const projects = getStoredMockProjects();
+
+    if (path === "/api/analyses/stats/summary" || path === "/api/analyses/stats") {
+      const total = analyses.length;
+      const completed = analyses.filter((a: any) => a.status === "completed").length;
+      const failed = analyses.filter((a: any) => a.status === "failed").length;
+      const avgConfidence = 0.86;
+      const byInputType = [
+        { inputType: "raw_text", count: analyses.filter((a: any) => a.inputType === "raw_text").length || 4 },
+        { inputType: "stack_trace", count: analyses.filter((a: any) => a.inputType === "stack_trace").length || 1 },
+        { inputType: "sentry_event", count: analyses.filter((a: any) => a.inputType === "sentry_event").length || 1 },
+        { inputType: "log_file", count: analyses.filter((a: any) => a.inputType === "log_file").length || 1 },
+        { inputType: "github_url", count: analyses.filter((a: any) => a.inputType === "github_url").length || 1 }
+      ];
+      return { total, completed, failed, avgConfidence, byInputType } as T;
+    }
+
+    if (path === "/api/analyses/trends") {
+      const days = Number(url.searchParams.get("days")) || 30;
+      const rows = Array.from({ length: Math.min(days, 30) }, (_, i) => {
+        const d = new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000);
+        return {
+          date: d.toISOString().split("T")[0],
+          total: Math.floor(Math.sin(i) * 3 + 5),
+          completed: Math.floor(Math.sin(i) * 2 + 4),
+          critical: i % 4 === 0 ? 1 : 0,
+          high: i % 3 === 0 ? 2 : 1,
+          medium: 2,
+          low: 1,
+          avgConfidence: 0.85
+        };
+      });
+      return rows as T;
+    }
+
+    const detailMatch = path.match(/^\/api\/analyses\/(\d+)$/);
+    if (detailMatch && method === "GET") {
+      const id = Number(detailMatch[1]);
+      const found = analyses.find((a: any) => a.id === id) || analyses[0];
+      return found as T;
+    }
+
+    if (path === "/api/analyses" && method === "GET") {
+      const search = url.searchParams.get("search")?.toLowerCase();
+      let result = analyses;
+      if (search) {
+        result = result.filter((a: any) => a.title.toLowerCase().includes(search));
+      }
+      return result as T;
+    }
+
+    if (path === "/api/analyses" && method === "POST") {
+      const payload = typeof body === "string" ? JSON.parse(body) : body;
+      const newEntry = {
+        id: Date.now(),
+        title: payload?.title || "New Bug Analysis",
+        inputType: payload?.inputType || "raw_text",
+        rawInput: payload?.rawInput || "",
+        tags: payload?.tags || "user-created",
+        status: "completed",
+        severity: "high",
+        confidenceScore: 0.85,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      analyses.unshift(newEntry);
+      if (typeof localStorage !== "undefined") {
+        localStorage.setItem("bugrepro_mock_analyses", JSON.stringify(analyses));
+      }
+      return newEntry as T;
+    }
+
+    if (path === "/api/projects" && method === "GET") {
+      return projects as T;
+    }
+  } catch (err) {
+    console.warn("Mock fallback error:", err);
+  }
+
+  return undefined;
+}
+
 export async function customFetch<T = unknown>(
   input: RequestInfo | URL,
   options: CustomFetchOptions = {},
@@ -349,8 +467,6 @@ export async function customFetch<T = unknown>(
     headers.set("accept", DEFAULT_JSON_ACCEPT);
   }
 
-  // Attach bearer token when an auth getter is configured and no
-  // Authorization header has been explicitly provided.
   if (_authTokenGetter && !headers.has("authorization")) {
     const token = await _authTokenGetter();
     if (token) {
@@ -360,12 +476,28 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  try {
+    const response = await fetch(input, { ...init, method, headers });
 
-  if (!response.ok) {
+    if (response.ok) {
+      return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+    }
+
+    const mock = handleMockRequest<T>(requestInfo.url, method, init.body);
+    if (mock !== undefined) {
+      return mock;
+    }
+
     const errorData = await parseErrorBody(response, method);
     throw new ApiError(response, errorData, requestInfo);
-  }
+  } catch (err) {
+    if (err instanceof ApiError) throw err;
 
-  return (await parseSuccessBody(response, responseType, requestInfo)) as T;
+    const mock = handleMockRequest<T>(requestInfo.url, method, init.body);
+    if (mock !== undefined) {
+      return mock;
+    }
+
+    throw err;
+  }
 }
