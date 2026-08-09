@@ -6,7 +6,7 @@
   "scripts": {
     "prebuild": "tsc --build ../../tsconfig.json",
     "dev": "pnpm run build && pnpm run start",
-    "build": "node ./build.mjs",
+    "build": "node ./build.mjs && pnpm --filter @workspace/bug-engine run build && node ../../scripts/copy-build.js",
     "start": "node --enable-source-maps ./dist/index.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
